@@ -1,0 +1,10 @@
+.upload-message {
+  margin: 15px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.upload-message.success { color: #7ce3ad; }
+.upload-message.error { color: #ff9da4; }
+.upload-message.loading { color: #9ecbff; }
+.primary-button:disabled { cursor: wait; opacity: .72; transform: none; }
