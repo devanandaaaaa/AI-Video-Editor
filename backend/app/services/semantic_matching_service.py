@@ -12,6 +12,7 @@ from app.services.embedding_service import (
     get_project_scene_collection,
 )
 from app.services.script_service import split_script_into_beats
+from app.services.audio_processing_service import get_voiceover_beats
 
 
 def match_script_beats_to_scenes(project_id: str, project_directory: Path) -> list[dict[str, object]]:
@@ -20,12 +21,18 @@ def match_script_beats_to_scenes(project_id: str, project_directory: Path) -> li
     if not api_key:
         raise ValueError("Gemini API key is not configured.")
 
-    script_path = project_directory / "script.txt"
-    script_text = script_path.read_text(encoding="utf-8-sig").strip()
-    if not script_text:
-        raise ValueError("The uploaded script is empty.")
-
-    beats = split_script_into_beats(script_text)
+    # Voiceover analysis is the primary story source. TXT remains a legacy fallback.
+    analysis_path = project_directory / "voiceover_analysis.json"
+    if analysis_path.is_file():
+        beats = get_voiceover_beats(project_directory)
+    else:
+        script_path = project_directory / "script.txt"
+        if not script_path.is_file():
+            raise ValueError("No voiceover story beats found. Run understand-voiceover first.")
+        script_text = script_path.read_text(encoding="utf-8-sig").strip()
+        if not script_text:
+            raise ValueError("The uploaded script is empty.")
+        beats = split_script_into_beats(script_text)
     collection = get_project_scene_collection(project_id)
     if collection.count() == 0:
         raise ValueError("No stored scene embeddings found. Run store-scene-embeddings first.")
@@ -33,10 +40,15 @@ def match_script_beats_to_scenes(project_id: str, project_directory: Path) -> li
     client = genai.Client(api_key=api_key)
     matches: list[dict[str, object]] = []
     for beat in beats:
-        beat_text = beat["text"]
+        beat_text = beat.get("normalized_narration") or beat["text"]
+        if not isinstance(beat_text, str) or not beat_text.strip():
+            raise ValueError("A saved story beat has no usable normalized narration.")
+        visual_concepts = beat.get("visual_concepts")
+        concept_query = ", ".join(visual_concepts) if isinstance(visual_concepts, list) else ""
+        query_text = f"{beat_text}. Visual concepts: {concept_query}" if concept_query else beat_text
         response = client.models.embed_content(
             model=EMBEDDING_MODEL,
-            contents=f"task: search result | query: {beat_text}",
+            contents=f"task: search result | query: {query_text}",
             config=types.EmbedContentConfig(output_dimensionality=EMBEDDING_DIMENSIONS),
         )
         if not response.embeddings or not response.embeddings[0].values:
@@ -60,6 +72,9 @@ def match_script_beats_to_scenes(project_id: str, project_directory: Path) -> li
             {
                 "beat_number": beat["beat_number"],
                 "beat_text": beat_text,
+                "semantic_meaning": beat.get("semantic_meaning"),
+                "visual_concepts": visual_concepts or [],
+                "narrative_relevance": beat.get("narrative_relevance"),
                 "matched_scene_number": metadata["scene_number"],
                 "clip_name": metadata["clip_name"],
                 "frame_number": metadata["frame_number"],

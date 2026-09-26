@@ -7,11 +7,12 @@ from pathlib import Path
 import chromadb
 from google import genai
 from google.genai import types
+from app.config import DATA_DIRECTORY
 
 
 EMBEDDING_MODEL = "gemini-embedding-2"
 EMBEDDING_DIMENSIONS = 768
-CHROMA_DIRECTORY = Path(__file__).resolve().parents[2] / "chroma_data"
+CHROMA_DIRECTORY = DATA_DIRECTORY / "chroma_data"
 
 
 def _collection_name(project_id: str) -> str:

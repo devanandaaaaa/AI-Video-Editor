@@ -1,490 +1,69 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import heroImage from "./assets/hero.png";
 import "./App.css";
-import "./HighFidelity.css";
-import "./Home.css";
-import "./Dashboard.css";
-import "./UploadStatus.css";
 
-const API = "http://127.0.0.1:8000";
-const I = {
-  spark: "M12 3 13.8 8.2 19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3Z",
-  home: "M3 10.5 12 3l9 7.5V21H3v-10.5ZM9 21v-6h6v6",
-  folder: "M3 7h7l2 2h9v10H3V7Z",
-  plus: "M12 5v14M5 12h14",
-  doc: "M7 3h6l4 4v14H7V3Zm6 0v5h5",
-  video: "M4 6h11v12H4V6Zm11 4 5-3v10l-5-3",
-  check: "m6 12 3.5 3.5L18 7",
-  arrow: "M5 12h14m-6-6 6 6-6 6",
-  down: "M12 3v11m0 0 4-4m-4 4-4-4M5 19h14",
-};
-function Icon({ n, s = 18 }) {
-  return (
-    <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
-      <path
-        d={I[n]}
-        stroke="currentColor"
-        strokeWidth="1.8"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
+const API = import.meta.env.VITE_API_URL ?? (import.meta.env.DEV ? "http://127.0.0.1:8000" : "");
+const protectedPaths = new Set(["/dashboard", "/projects", "/new-project", "/templates", "/account", "/settings", "/subscription"]);
+const publicPaths = new Set(["/", "/how-it-works", "/pricing", "/about", "/support"]);
+
+function readableError(detail) {
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) return detail.map(readableError).filter(Boolean).join(" ");
+  if (detail && typeof detail === "object") { const field = Array.isArray(detail.loc) ? detail.loc.filter(x => x !== "body").join(" ") : ""; return `${field ? `${field}: ` : ""}${detail.msg || detail.message || "Please check your input."}`; }
+  return "Something went wrong. Please try again.";
 }
-const empty = { type: "", message: "" };
+const Icon = ({ children }) => <span className="icon" aria-hidden="true">{children}</span>;
+const Notice = ({ notice }) => notice?.message ? <p className={`notice ${notice.kind}`}>{notice.message}</p> : null;
+const Status = ({ value }) => <span className={`status ${value === "completed" ? "ready" : value === "failed" ? "failed" : ""}`}>{(value || "created").replaceAll("_", " ")}</span>;
+
 export default function App() {
-  const [view, setView] = useState("home"),
-    [script, setScript] = useState(null),
-    [videos, setVideos] = useState([]),
-    [id, setId] = useState(""),
-    [frames, setFrames] = useState(false),
-    [beats, setBeats] = useState([]),
-    [scenes, setScenes] = useState([]),
-    [embed, setEmbed] = useState(null),
-    [matches, setMatches] = useState([]),
-    [selections, setSelections] = useState([]),
-    [render, setRender] = useState(null),
-    [load, setLoad] = useState(empty),
-    [status, setStatus] = useState(empty);
-  const reset = () => {
-    setId("");
-    setFrames(false);
-    setBeats([]);
-    setScenes([]);
-    setEmbed(null);
-    setMatches([]);
-    setSelections([]);
-    setRender(null);
-    setLoad(empty);
-    setStatus(empty);
-  };
-  const url = render?.output_video_path
-    ? `${API}/outputs/${render.output_video_path.split("/").map(encodeURIComponent).join("/")}`
-    : "";
-  const call = async (path, method = "POST", body) => {
-    setLoad({ type: "loading", message: "Processing your project..." });
-    try {
-      const r = await fetch(`${API}${path}`, {
-        method,
-        headers: body ? { "Content-Type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      const j = await r.json();
-      if (!r.ok) throw Error(j.detail || "Request failed.");
-      setLoad({ type: "success", message: "Completed successfully." });
-      return j;
-    } catch (e) {
-      setLoad({
-        type: "error",
-        message: e.message || "Could not reach the backend.",
-      });
-      return null;
-    }
-  };
-  const upload = async () => {
-    if (!script || !videos.length) {
-      setLoad({
-        type: "error",
-        message: "Choose one script and at least one video clip.",
-      });
-      return;
-    }
-    reset();
-    setView("workspace");
-    setLoad({ type: "loading", message: "Creating your project workspace..." });
-    const f = new FormData();
-    f.append("script", script);
-    videos.forEach((v) => f.append("videos", v));
-    try {
-      const r = await fetch(`${API}/api/projects/upload`, {
-          method: "POST",
-          body: f,
-        }),
-        j = await r.json();
-      if (!r.ok) throw Error(j.detail);
-      setId(j.project_id);
-      setLoad({
-        type: "success",
-        message: `${j.clip_count} clip(s) uploaded. Project ready.`,
-      });
-    } catch (e) {
-      setLoad({ type: "error", message: e.message || "Upload failed." });
-    }
-  };
-  const action = async (kind) => {
-    let j;
-    if (kind === "frames") {
-      j = await call(`/api/projects/${id}/extract-frames`);
-      if (j) setFrames(true);
-    }
-    if (kind === "beats") {
-      j = await call(`/api/projects/${id}/script-beats`, "GET");
-      if (j) setBeats(j.beats);
-    }
-    if (kind === "scenes") {
-      j = await call(`/api/projects/${id}/describe-scenes`);
-      if (j) setScenes(j.scenes);
-    }
-    if (kind === "embed") {
-      j = await call(`/api/projects/${id}/store-scene-embeddings`);
-      if (j) setEmbed(j);
-    }
-    if (kind === "match") {
-      j = await call(`/api/projects/${id}/match-script-beats`);
-      if (j) setMatches(j.matches);
-    }
-    if (kind === "plan") {
-      j = await call(`/api/projects/${id}/prepare-rough-cut`, "POST", {
-        matches,
-      });
-      if (j) setSelections(j.selections);
-    }
-    if (kind === "render") {
-      j = await call(`/api/projects/${id}/render-rough-cut`, "POST", {
-        selections,
-      });
-      if (j) {
-        setRender(j);
-        setView("result");
-      }
-    }
-  };
-  const steps = [
-    ["Uploading files", !!id],
-    ["Extracting frames", frames],
-    ["Extracting script beats", !!beats.length],
-    ["Understanding scenes", !!scenes.length],
-    ["Generating embeddings", !!embed],
-    ["Matching scenes", !!matches.length],
-    ["Preparing rough cut", !!selections.length],
-    ["Rendering video", !!render],
-  ];
-  const next = !id
-    ? null
-    : !frames
-      ? ["frames", "Extract Frames"]
-      : !beats.length
-        ? ["beats", "Extract Script Beats"]
-        : !scenes.length
-          ? ["scenes", "Understand Video Scenes"]
-          : !embed
-            ? ["embed", "Generate Embeddings"]
-            : !matches.length
-              ? ["match", "Match Script to Scenes"]
-              : !selections.length
-                ? ["plan", "Prepare Rough Cut"]
-                : !render
-                  ? ["render", "Render Rough Cut"]
-                  : null;
-  const Msg = () =>
-    load.message && (
-      <p className={`msg ${load.type}`}>
-        {load.type === "loading" && <i />}
-        {load.message}
-      </p>
-    );
-  const Upload = () => (
-    <section className="upload">
-      <div>
-        <p className="kicker">New project</p>
-        <h1>Build your rough cut.</h1>
-        <p>
-          Select your script and footage. The AI will find visuals for every
-          story beat.
-        </p>
-      </div>
-      <div className="uploads">
-        <label>
-          <input
-            type="file"
-            accept=".txt"
-            onChange={(e) => {
-              setScript(e.target.files?.[0] || null);
-              reset();
-            }}
-          />
-          <Icon n={script ? "check" : "doc"} />
-          <b>Voiceover script</b>
-          <strong>{script?.name || "Choose a TXT file"}</strong>
-          <small>One script file</small>
-        </label>
-        <label>
-          <input
-            type="file"
-            accept="video/*"
-            multiple
-            onChange={(e) => {
-              setVideos([...e.target.files]);
-              reset();
-            }}
-          />
-          <Icon n={videos.length ? "check" : "video"} />
-          <b>Raw video clips</b>
-          <strong>
-            {videos.length
-              ? `${videos.length} clip(s) selected`
-              : "Add your footage"}
-          </strong>
-          <small>
-            {videos.length
-              ? videos.map((x) => x.name).join(" · ")
-              : "MP4, MOV, WEBM"}
-          </small>
-        </label>
-      </div>
-      <div className="bar">
-        <span>
-          <b>Ready when you are</b>
-          <small>Files remain in this private session.</small>
-        </span>
-        <button className="primary" onClick={upload}>
-          Create Project <Icon n="arrow" />
-        </button>
-      </div>
-      <Msg />
-    </section>
-  );
-  const Workspace = () => (
-    <div className="dash">
-      <aside>
-        <b>
-          <em>
-            <Icon n="spark" />
-          </em>{" "}
-          AI Video Editor
-        </b>
-        <button className="selected">
-          <Icon n="home" />
-          Dashboard
-        </button>
-        <button onClick={() => setView("projects")}>
-          <Icon n="folder" />
-          Projects
-        </button>
-        <button
-          onClick={() => {
-            reset();
-            setScript(null);
-            setVideos([]);
-          }}
-        >
-          <Icon n="plus" />
-          New Project
-        </button>
-        <button type="button"><Icon n="doc" />Templates</button>
-        <button type="button"><Icon n="spark" />Settings</button>
-        <button type="button"><Icon n="video" />Support</button>
-        <small className="logout">Logout</small>
-      </aside>
-      <section className="content">
-        <header>
-          <div>
-            <p className="kicker">Dashboard</p>
-            <h1>Dashboard</h1>
-            <p>Welcome back! Here's an overview of your video projects.</p>
-          </div>
-          <button className="primary" onClick={() => { reset(); setScript(null); setVideos([]); }}>New Project <Icon n="plus" /></button>
-        </header>
-        <div className="dashboard-stats"><div><b>{id ? 1 : 0}</b><span>Total Projects</span></div><div><b>{render ? 1 : 0}</b><span>Completed</span></div><div><b>{id && !render ? 1 : 0}</b><span>Processing</span></div><div><b>0</b><span>Failed</span></div></div>
-        {!id && <div className="recent-empty"><b>Recent Projects</b><span>No projects yet. Create your first project to see it here.</span></div>}
-        {!id ? (
-          <Upload />
-        ) : (
-          <>
-            <div className="work">
-              <article>
-                <p className="kicker">Processing pipeline</p>
-                <h2>Your edit, step by step</h2>
-                {steps.map(([x, done], i) => (
-                  <div className={`step ${done ? "done" : ""}`} key={x}>
-                    <span>{done ? <Icon n="check" s={14} /> : i + 1}</span>
-                    <b>{x}</b>
-                    <small>{done ? "Complete" : "Waiting"}</small>
-                  </div>
-                ))}
-              </article>
-              <article className="sidecard">
-                <p className="kicker">Progress</p>
-                <h2>
-                  {steps.filter((x) => x[1]).length} of {steps.length} stages
-                </h2>
-                <p>Progress is based only on completed processing steps.</p>
-              </article>
-            </div>
-            {next && (
-              <div className="bar">
-                <span>
-                  <b>Next action</b>
-                  <small>Continue the real project workflow.</small>
-                </span>
-                <button
-                  className="primary"
-                  disabled={load.type === "loading"}
-                  onClick={() => action(next[0])}
-                >
-                  {load.type === "loading" ? "Processing..." : next[1]}{" "}
-                  <Icon n="arrow" />
-                </button>
-              </div>
-            )}
-            <Msg />
-          </>
-        )}
-      </section>
-    </div>
-  );
-  return (
-    <main>
-      <nav className="top">
-        <button className="logo" onClick={() => setView("home")}>
-          <em>
-            <Icon n="spark" />
-          </em>
-          AI Video Editor
-        </button>
-        <span>
-          <button onClick={() => setView("home")}>Home</button>
-          <button onClick={() => setView("projects")}>Projects</button>
-          <a href="#how">How it works</a>
-          <a href="#pricing">Pricing</a>
-          <a href="#about">About</a>
-          <button className="primary mini" onClick={() => setView("workspace")}>
-            Get Started
-          </button>
-        </span>
-      </nav>
-      {view === "home" && (
-        <>
-          <section className="hero">
-            <div>
-              <p className="kicker">AI-powered video editing</p>
-              <h1>
-                Turn your script
-                <br />
-                into a <mark>video.</mark>
-              </h1>
-              <p>
-                Upload your script and raw videos. Our AI analyzes your content,
-                matches the best scenes, and creates a rough cut for you.
-              </p>
-              <button className="primary" onClick={() => setView("workspace")}>
-                Create New Project <Icon n="arrow" />
-              </button>
-            </div>
-            <div className="preview">
-              <div className="player-top"><span>AI rough cut</span><span>● Ready</span></div>
-              <div className="mountains"><i className="mountain one" /><i className="mountain two" /><i className="person" /><button className="play" type="button" aria-label="Decorative preview"><Icon n="arrow" s={25} /></button></div>
-              <div className="player-controls"><span>0:00 / 1:28</span><div className="timeline"><i /></div><span>◔ &nbsp; ⛶</span></div>
-            </div>
-          </section>
-          <section className="features" id="how">
-            {[
-              [
-                "doc",
-                "AI Scene Understanding",
-                "Gemini describes your footage from sampled frames.",
-              ],
-              [
-                "spark",
-                "Semantic Matching",
-                "Script beats are matched to relevant scenes.",
-              ],
-              [
-                "video",
-                "Auto Edit & Export",
-                "FFmpeg creates a downloadable rough cut.",
-              ],
-            ].map((x) => (
-              <article key={x[1]}>
-                <Icon n={x[0]} />
-                <h2>{x[1]}</h2>
-                <p>{x[2]}</p>
-              </article>
-            ))}
-          </section>
-          <section className="technology-strip" aria-label="Technology used in this project">
-            <div><strong>8</strong><span>AI Pipeline Stages</span></div>
-            <div><strong>Gemini</strong><span>AI Understanding</span></div>
-            <div><strong>Embeddings</strong><span>Gemini + ChromaDB</span></div>
-            <div><strong>FFmpeg</strong><span>Video Rendering</span></div>
-          </section>
-        </>
-      )}
-      {view === "workspace" && <Workspace />}
-      {view === "projects" && (
-        <section className="projects">
-          <p className="kicker">Projects</p>
-          <h1>Your projects</h1>
-          {id ? (
-            <article>
-              <Icon n="video" />
-              <span>
-                <b>Project {id.slice(0, 8)}</b>
-                <small>
-                  {render ? "Rough cut rendered" : "Current session project"}
-                </small>
-              </span>
-              <button onClick={() => setView(render ? "result" : "workspace")}>
-                Open <Icon n="arrow" />
-              </button>
-            </article>
-          ) : (
-            <div className="empty">
-              <Icon n="folder" s={28} />
-              <h2>No previous projects yet.</h2>
-              <p>Projects are available during this browser session.</p>
-              <button className="primary" onClick={() => setView("workspace")}>
-                Create New Project
-              </button>
-            </div>
-          )}
-        </section>
-      )}
-      {view === "result" && (
-        <section className="result">
-          <p className="kicker">Export complete</p>
-          <h1>Your video is ready.</h1>
-          <p>
-            {render?.segment_count || 0} selected segments assembled into a{" "}
-            {render?.duration_seconds || 0}-second rough cut.
-          </p>
-          {url && (
-            <video
-              controls
-              src={url}
-              onError={() =>
-                setLoad({
-                  type: "error",
-                  message:
-                    "Video preview could not load. Confirm the backend is running, then render again.",
-                })
-              }
-            />
-          )}
-          <Msg />
-          <div>
-            <a
-              className="primary"
-              href={url}
-              download={
-                render?.output_video_path?.split("/").pop() || "rough-cut.mp4"
-              }
-            >
-              <Icon n="down" />
-              Download Rough Cut
-            </a>
-            <button
-              onClick={() => {
-                reset();
-                setScript(null);
-                setVideos([]);
-                setView("workspace");
-              }}
-            >
-              Create Again
-            </button>
-          </div>
-        </section>
-      )}
-    </main>
-  );
+  const [path, setPath] = useState(() => window.location.pathname || "/");
+  const [token, setToken] = useState(() => localStorage.getItem("ave_token") || "");
+  const [user, setUser] = useState(null), [projects, setProjects] = useState([]), [templates, setTemplates] = useState([]), [plans, setPlans] = useState([]);
+  const [notice, setNotice] = useState(null), [loading, setLoading] = useState(false);
+  const navigate = useCallback(next => { window.history.pushState({}, "", next); setPath(next.split("?")[0]); setNotice(null); }, []);
+  const api = useCallback(async (url, options = {}) => {
+    const response = await fetch(`${API}${url}`, { ...options, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...options.headers } });
+    const body = response.status === 204 ? null : await response.json().catch(() => null);
+    if (!response.ok) throw new Error(readableError(body?.detail));
+    return body;
+  }, [token]);
+  const refreshAccount = useCallback(async () => {
+    if (!token) return;
+    const [account, projectData, templateData] = await Promise.all([api("/api/auth/me"), api("/api/projects"), api("/api/projects/templates")]);
+    setUser(account); setProjects(projectData.projects || []); setTemplates(templateData.templates || []);
+  }, [api, token]);
+  useEffect(() => { const listener = () => setPath(window.location.pathname || "/"); window.addEventListener("popstate", listener); return () => window.removeEventListener("popstate", listener); }, []);
+  useEffect(() => { api("/api/auth/plans").then(data => setPlans(data.plans || [])).catch(() => {}); }, [api]);
+  useEffect(() => { if (!token) { setUser(null); setProjects([]); return; } refreshAccount().catch(() => { localStorage.removeItem("ave_token"); setToken(""); navigate("/login"); }); }, [token, refreshAccount, navigate]);
+  useEffect(() => { if (!token && protectedPaths.has(path)) navigate("/login"); }, [path, token, navigate]);
+  const authenticate = async (mode, form) => { setLoading(true); setNotice(null); try { const response = await fetch(`${API}/api/auth/${mode}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) }); const data = await response.json().catch(() => null); if (!response.ok) throw new Error(readableError(data?.detail)); localStorage.setItem("ave_token", data.token); setToken(data.token); setUser(data.user); navigate("/dashboard"); } catch (error) { setNotice({ kind: "error", message: error.message }); } finally { setLoading(false); } };
+  const logout = async () => { try { await api("/api/auth/logout", { method: "POST" }); } catch {} localStorage.removeItem("ave_token"); setToken(""); setUser(null); navigate("/"); };
+  const content = !token && ["/login", "/signup"].includes(path) ? <AuthPage signup={path === "/signup"} authenticate={authenticate} loading={loading} notice={notice} navigate={navigate} />
+    : path === "/" ? <Home navigate={navigate} signedIn={!!token} plans={plans} /> : path === "/how-it-works" ? <InfoPage title="How it works" eyebrow="A real audio-first workflow" sections={howItWorks} /> : path === "/pricing" ? <Pricing plans={plans} signedIn={!!token} navigate={navigate} /> : path === "/about" ? <InfoPage title="Built for story-led video editing" eyebrow="About AI Video Editor" sections={aboutSections} /> : path === "/support" ? <Support />
+    : token && path === "/dashboard" ? <Dashboard user={user} projects={projects} navigate={navigate} /> : token && path === "/projects" ? <Projects projects={projects} api={api} token={token} navigate={navigate} /> : token && path === "/new-project" ? <NewProject templates={templates} api={api} refresh={refreshAccount} navigate={navigate} setNotice={setNotice} /> : token && path === "/templates" ? <Templates templates={templates} navigate={navigate} /> : token && path === "/account" ? <Account key={user?.id || "loading"} user={user} api={api} setUser={setUser} setNotice={setNotice} logout={logout} /> : token && path === "/settings" ? <Settings key={user?.id || "loading"} user={user} api={api} setUser={setUser} setNotice={setNotice} logout={logout} /> : token && path === "/subscription" ? <Subscription user={user} plans={plans} /> : <Home navigate={navigate} signedIn={!!token} plans={plans} />;
+  const nav = [["Home", "/"], ["How It Works", "/how-it-works"], ["Pricing", "/pricing"], ["About", "/about"]];
+  const workspace = [["Dashboard", "/dashboard"], ["Projects", "/projects"], ["New Project", "/new-project"], ["Templates", "/templates"], ["Account", "/account"], ["Settings", "/settings"], ["Subscription", "/subscription"], ["Support", "/support"]];
+  return <div className="app-shell"><header className="topbar"><button className="brand" onClick={() => navigate("/")}><b>✦</b> AI Video Editor</button><nav>{nav.map(([label, href]) => <button className={path === href ? "active" : ""} onClick={() => navigate(href)} key={href}>{label}</button>)}</nav><div className="top-actions">{token ? <><button onClick={() => navigate("/account")}>Account</button><button className="button small" onClick={() => navigate("/new-project")}>New Project</button></> : <><button onClick={() => navigate("/login")}>Login</button><button className="button small" onClick={() => navigate("/signup")}>Get Started</button></>}</div></header>{token && !publicPaths.has(path) && <aside className="sidebar">{workspace.map(([label, href]) => <button className={path === href ? "selected" : ""} onClick={() => navigate(href)} key={href}>{label}</button>)}<button className="logout" onClick={logout}>Logout</button></aside>}<main className={token && !publicPaths.has(path) ? "workspace" : "public-main"}>{content}<Notice notice={notice} /></main>{!token && <Footer navigate={navigate} />}</div>;
 }
+
+function AuthPage({ signup, authenticate, loading, notice, navigate }) { const [form, setForm] = useState({ name: "", email: "", password: "" }); return <section className="auth-card"><p className="eyebrow">{signup ? "Start creating" : "Welcome back"}</p><h1>{signup ? "Create your workspace." : "Sign in to your workspace."}</h1><form onSubmit={e => { e.preventDefault(); authenticate(signup ? "signup" : "login", signup ? form : { email: form.email, password: form.password }); }}>{signup && <label>Name<input required minLength="2" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></label>}<label>Email<input required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></label><label>Password<input required type="password" minLength="8" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label><button className="button" disabled={loading}>{loading ? "Please wait…" : signup ? "Create account" : "Login"}</button><Notice notice={notice} /><button type="button" className="text-button" onClick={() => navigate(signup ? "/login" : "/signup")}>{signup ? "Already have an account? Login" : "New here? Create an account"}</button></form></section>; }
+function Home({ navigate, signedIn, plans }) { return <><section className="hero"><div><p className="eyebrow">AI-powered video editing</p><h1>Turn your voice<br />into a <span>video.</span></h1><p>Upload a voiceover and raw footage. AI understands the story, finds semantically matching visuals, and creates a rough cut with your original voice.</p><button className="button" onClick={() => navigate(signedIn ? "/new-project" : "/signup")}>Create New Project <Icon>→</Icon></button></div><div className="video-frame"><div className="player-label"><span>Voiceover-led edit</span><span className="live">● Ready</span></div><img src={heroImage} alt="Person sitting on a mountain at sunset" /><div className="player-controls"><span>0:00 / 1:28</span><i><b /></i></div></div></section><section className="feature-grid">{[["Voiceover Understanding", "Your narration is the primary story source."], ["Semantic Matching", "Gemini descriptions and embeddings connect story to footage."], ["Auto Edit & Export", "FFmpeg produces a downloadable rough-cut MP4."]].map(([title, text]) => <article key={title}><Icon>✦</Icon><h2>{title}</h2><p>{text}</p></article>)}</section><section className="band"><div><p className="eyebrow">How it works</p><h2>From spoken story to selected scenes.</h2></div><div className="steps"><span>01 <b>Upload voiceover + footage</b></span><span>02 <b>Understand story and scenes</b></span><span>03 <b>Match, render, download</b></span></div><button className="text-button" onClick={() => navigate("/how-it-works")}>Explore the workflow →</button></section><section className="technology"><p className="eyebrow">Technology</p><h2>Purpose-built around the media pipeline.</h2><div><span>Gemini<small>audio and scene understanding</small></span><span>Embeddings + ChromaDB<small>semantic scene retrieval</small></span><span>FFmpeg<small>rough-cut rendering</small></span></div></section><section className="pricing-preview"><p className="eyebrow">Pricing</p><h2>Start with the real trial.</h2>{plans.slice(0, 1).map(plan => <article key={plan.id}><b>{plan.name}</b><p>{plan.description}</p><button className="button" onClick={() => navigate(signedIn ? "/subscription" : "/pricing")}>View plans</button></article>)}</section></>; }
+function Dashboard({ user, projects, navigate }) { const stats = useMemo(() => ({ total: projects.length, completed: projects.filter(p => p.status === "completed").length, processing: projects.filter(p => ["uploading", "processing_audio", "extracting_frames", "describing_scenes", "embedding", "matching", "rendering"].includes(p.status)).length, failed: projects.filter(p => p.status === "failed").length }), [projects]); return <section><p className="eyebrow">Dashboard</p><h1>Welcome back{user ? `, ${user.name.split(" ")[0]}` : ""}.</h1><p className="muted">Your projects and uploads are private to your account.</p><div className="stats">{[[stats.total, "Total projects"], [stats.completed, "Completed"], [stats.processing, "Processing"], [stats.failed, "Failed"], [user?.subscription?.status || "trial", "Subscription"]].map(([value, label]) => <article key={label}><b>{value}</b><span>{label}</span></article>)}</div><section className="panel"><div className="section-row"><div><h2>Recent projects</h2><p>Real projects associated with this account.</p></div><button className="button small" onClick={() => navigate("/new-project")}>New project</button></div>{projects.length ? <ProjectRows projects={projects.slice(0, 5)} navigate={navigate} /> : <Empty title="No projects yet" text="Start with a voiceover and footage for the AI to match." action={() => navigate("/new-project")} />}</section></section>; }
+function ProjectRows({ projects, navigate }) { return <div className="project-list">{projects.map(project => <article key={project.id}><div><b>{project.name}</b><small>{formatDate(project.created_at)} · {project.template_name || "No template"}</small></div><Status value={project.status} />{project.output_video_path && <span className="output">MP4 ready</span>}<button className="text-button" onClick={() => navigate(`/projects?project=${project.id}`)}>Open →</button></article>)}</div>; }
+function Projects({ projects, api, token, navigate }) { const selectedId = new URLSearchParams(window.location.search).get("project"); const [selected, setSelected] = useState(null), [error, setError] = useState(null); const load = useCallback(() => { if (!selectedId) { setSelected(null); return Promise.resolve(); } return api(`/api/projects/${selectedId}`).then(setSelected).catch(e => setError(e.message)); }, [api, selectedId]); useEffect(() => { load(); }, [load]); return <section><p className="eyebrow">Projects</p><div className="section-row"><div><h1>Your projects</h1><p className="muted">Project history, status, template, and exports.</p></div><button className="button small" onClick={() => navigate("/new-project")}>New project</button></div>{error && <Notice notice={{ kind: "error", message: error }} />}{selected ? <ProjectDetail key={selected.id} project={selected} api={api} token={token} onUpdated={load} /> : projects.length ? <section className="panel"><ProjectRows projects={projects} navigate={navigate} /></section> : <Empty title="No projects yet" text="Create your first audio-first project to see it here." action={() => navigate("/new-project")} />}</section>; }
+function ProjectDetail({ project, api, token, onUpdated }) { const [preview, setPreview] = useState(""), [stage, setStage] = useState(""), [error, setError] = useState(""); const outputPath = `/api/projects/${project.id}/output`; useEffect(() => { if (!project.output_video_path) return; let active = true, objectUrl = ""; fetch(`${API}${outputPath}`, { headers: { Authorization: `Bearer ${token}` } }).then(response => { if (!response.ok) throw new Error("The completed video could not be loaded."); return response.blob(); }).then(blob => { objectUrl = URL.createObjectURL(blob); if (active) setPreview(objectUrl); }).catch(e => active && setError(e.message)); return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); }; }, [project.id, project.output_video_path, token]); const download = async () => { try { const response = await fetch(`${API}${outputPath}`, { headers: { Authorization: `Bearer ${token}` } }); if (!response.ok) throw new Error("The completed video could not be downloaded."); const url = URL.createObjectURL(await response.blob()); const link = document.createElement("a"); link.href = url; link.download = `${project.name || "ai-video"}.mp4`; link.click(); URL.revokeObjectURL(url); } catch (e) { setError(e.message); } }; const process = async () => { setError(""); try { const call = async (label, suffix, options) => { setStage(label); return api(`/api/projects/${project.id}${suffix}`, options); }; if (project.audio_file) await call("Understanding voiceover…", "/understand-voiceover", { method: "POST" }); else await call("Preparing legacy script beats…", "/script-beats"); await call("Extracting video frames…", "/extract-frames", { method: "POST" }); await call("Understanding video scenes…", "/describe-scenes", { method: "POST" }); await call("Generating scene embeddings…", "/store-scene-embeddings", { method: "POST" }); const matches = await call("Matching story beats to scenes…", "/match-script-beats", { method: "POST" }); const plan = await call("Preparing rough cut…", "/prepare-rough-cut", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ matches: matches.matches }) }); await call("Rendering final video with original voiceover…", "/render-rough-cut", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selections: plan.selections }) }); setStage("Ready"); await onUpdated(); } catch (e) { setStage(""); setError(e.message); } }; return <section className="project-detail panel"><div className="section-row"><div><h2>{project.name}</h2><p>{formatDate(project.created_at)} · {project.template_name || "No template"}</p></div><Status value={project.status} /></div><div className="detail-grid"><span><b>Voiceover</b>{project.audio_file || "Legacy script project"}</span><span><b>Template</b>{project.template_name || "Not selected"}</span><span><b>Status</b>{project.status?.replaceAll("_", " ")}</span>{project.output_duration_seconds && <span><b>Output duration</b>{project.output_duration_seconds}s</span>}</div>{project.output_video_path ? <>{preview && <video controls src={preview} />}<button className="button" onClick={download}>Download final MP4</button></> : <><p className="muted">Run the existing processing pipeline to create an output preview.</p><button className="button" disabled={!!stage} onClick={process}>{stage || "Process project"}</button></>}{error && <Notice notice={{ kind: "error", message: error }} />}</section>; }
+function NewProject({ templates, api, refresh, navigate, setNotice }) { const [voiceover, setVoiceover] = useState(null), [videos, setVideos] = useState([]), [script, setScript] = useState(null), [name, setName] = useState(""), [templateId, setTemplateId] = useState(""), [saving, setSaving] = useState(false), [local, setLocal] = useState(null); const submit = async e => { e.preventDefault(); if ((!voiceover && !script) || !videos.length || !templateId) return setLocal({ kind: "error", message: "Choose a voiceover (or legacy TXT script), at least one video, and a template." }); setSaving(true); setLocal({ kind: "loading", message: "Uploading your private project files…" }); try { const form = new FormData(); if (voiceover) form.append("voiceover", voiceover); if (script) form.append("script", script); videos.forEach(file => form.append("videos", file)); form.append("name", name.trim() || (voiceover || script).name.replace(/\.[^.]+$/, "")); form.append("template_id", templateId); const created = await api("/api/projects/upload", { method: "POST", body: form }); await refresh(); setNotice({ kind: "success", message: "Project created. Your files are associated with this account." }); navigate(`/projects?project=${created.project_id}`); } catch (error) { setLocal({ kind: "error", message: error.message }); } finally { setSaving(false); } }; return <section><p className="eyebrow">New project</p><h1>Start with your voice.</h1><p className="muted">Your voiceover is the story source. Add footage you want AI to match to it.</p><form className="new-project panel" onSubmit={submit}><label>Project name<input value={name} placeholder="Optional project name" onChange={e => setName(e.target.value)} /></label><div className="upload-grid"><FilePicker title="Voiceover audio" help="MP3, WAV, M4A, AAC, OGG, WEBM" file={voiceover} accept="audio/*,.m4a,.aac,.ogg" onChange={e => setVoiceover(e.target.files?.[0] || null)} /><FilePicker title="Raw video clips" help="MP4, MOV, WEBM — select one or more" file={videos.length ? `${videos.length} clip(s): ${videos.map(file => file.name).join(", ")}` : null} accept="video/*,.mov,.webm" multiple onChange={e => setVideos(Array.from(e.target.files || []))} /></div><label>Output template<select required value={templateId} onChange={e => setTemplateId(e.target.value)}><option value="">Select a template</option>{templates.map(template => <option value={template.id} key={template.id}>{template.name} — {template.output_width}×{template.output_height}</option>)}</select></label><details><summary>Legacy TXT script (optional)</summary><input type="file" accept=".txt" onChange={e => setScript(e.target.files?.[0] || null)} />{script && <small>{script.name}</small>}</details><div className="section-row"><span><b>Ready when you are</b><small>Files are private to your account.</small></span><button className="button" disabled={saving}>{saving ? "Creating project…" : "Create Project"}</button></div><Notice notice={local} /></form></section>; }
+function FilePicker({ title, help, file, ...input }) { return <label className="file-picker"><b>{title}</b><input type="file" {...input} /><strong>{file?.name || file || "Choose file"}</strong><small>{help}</small></label>; }
+function Templates({ templates, navigate }) { return <section><p className="eyebrow">Templates</p><h1>Choose the output shape.</h1><p className="muted">Templates are stored in the application database and selected for each new project.</p><div className="template-grid">{templates.map(template => <article key={template.id}><p className="eyebrow">{template.output_width}×{template.output_height}</p><h2>{template.name}</h2><p>{template.description}</p><button className="text-button" onClick={() => navigate("/new-project")}>Use this template →</button></article>)}</div></section>; }
+function Account({ user, api, setUser, setNotice, logout }) { const [name, setName] = useState(user?.name || ""); const save = async () => { try { const updated = await api("/api/auth/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }); setUser(updated); setNotice({ kind: "success", message: "Profile updated." }); } catch (e) { setNotice({ kind: "error", message: e.message }); } }; return <section className="form-page"><p className="eyebrow">Account</p><h1>Your account.</h1><section className="panel"><h2>Profile information</h2><label>Name<input value={name} onChange={e => setName(e.target.value)} /></label><label>Email<input value={user?.email || ""} disabled /></label><button className="button" onClick={save}>Save profile</button></section><section className="panel"><h2>Subscription & trial</h2><p><b>{user?.subscription?.name || "Free trial"}</b> · {user?.subscription?.status || "trial"}</p><p className="muted">Billing is not enabled in this phase.</p></section><button className="danger" onClick={logout}>Logout</button></section>; }
+function Settings({ user, api, setUser, setNotice, logout }) { const [name, setName] = useState(user?.name || ""), [passwords, setPasswords] = useState({ current_password: "", new_password: "" }); const save = async () => { try { const updated = await api("/api/auth/profile", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }); setUser(updated); setNotice({ kind: "success", message: "Profile updated." }); } catch (e) { setNotice({ kind: "error", message: e.message }); } }; const change = async () => { try { await api("/api/auth/password", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(passwords) }); setPasswords({ current_password: "", new_password: "" }); setNotice({ kind: "success", message: "Password updated." }); } catch (e) { setNotice({ kind: "error", message: e.message }); } }; return <section className="form-page"><p className="eyebrow">Settings</p><h1>Manage settings.</h1><section className="panel"><h2>Profile information</h2><label>Name<input value={name} onChange={e => setName(e.target.value)} /></label><button className="button" onClick={save}>Save profile</button></section><section className="panel"><h2>Change password</h2><label>Current password<input type="password" value={passwords.current_password} onChange={e => setPasswords({ ...passwords, current_password: e.target.value })} /></label><label>New password<input type="password" minLength="8" value={passwords.new_password} onChange={e => setPasswords({ ...passwords, new_password: e.target.value })} /></label><button className="button" onClick={change}>Update password</button></section><section className="panel"><h2>Subscription & trial</h2><p><b>{user?.subscription?.name || "Free trial"}</b> · {user?.subscription?.status || "trial"}</p></section><button className="danger" onClick={logout}>Logout</button></section>; }
+function Pricing({ plans, signedIn, navigate }) { return <section className="info-page"><p className="eyebrow">Pricing</p><h1>Clear about what is available.</h1><p className="lead">The current product offers a real 14-day trial. Paid plan checkout is not enabled.</p><div className="pricing-grid">{plans.map(plan => <article key={plan.id}><h2>{plan.name}</h2><b>{plan.monthly_price_cents ? `₹${plan.monthly_price_cents / 100}/month` : "Available now: trial"}</b><p>{plan.description}</p><button className="button" disabled={plan.id !== 1} onClick={() => navigate(signedIn ? "/subscription" : "/signup")}>{plan.id === 1 ? "Start trial" : "Not available yet"}</button></article>)}</div></section>; }
+function Subscription({ user, plans }) { return <section className="form-page"><p className="eyebrow">Subscription</p><h1>Your current access.</h1><section className="panel"><h2>{user?.subscription?.name || "Free trial"}</h2><p>Status: <Status value={user?.subscription?.status || "trial"} /></p><p>Trial ends: {user?.subscription?.trial_ends_at ? formatDate(user.subscription.trial_ends_at) : "Not available"}</p><p className="muted">There is no billing or payment flow in this product yet.</p></section><section className="panel"><h2>Plan catalogue</h2>{plans.map(plan => <p key={plan.id}><b>{plan.name}</b> — {plan.description}</p>)}</section></section>; }
+function InfoPage({ title, eyebrow, sections }) { return <section className="info-page"><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><div className="info-sections">{sections.map(section => <article key={section.title}><h2>{section.title}</h2><p>{section.text}</p></article>)}</div></section>; }
+function Support() { return <InfoPage eyebrow="Support" title="Help with your workspace." sections={[{ title: "Uploading", text: "Choose one supported voiceover and one or more MP4, MOV, or WEBM clips. Keep the voiceover under the current 20 MB processing limit." }, { title: "Processing", text: "The existing pipeline analyzes narration and sampled video frames before rendering. Large clips and AI requests can take time." }, { title: "Account issues", text: "Use Settings to update your profile or password. If a session expires, sign in again." }, { title: "Failed AI processing", text: "Read the project error, confirm uploaded media is playable, and verify backend Gemini configuration. Then retry through the existing workflow." }, { title: "Contacting support", text: "This local project does not publish a support contact channel yet. Please use the project team’s established communication channel." }]} />; }
+function Empty({ title, text, action }) { return <section className="empty"><h2>{title}</h2><p>{text}</p><button className="button" onClick={action}>Create New Project</button></section>; }
+function Footer({ navigate }) { return <footer><b>✦ AI Video Editor</b><span><button onClick={() => navigate("/about")}>About</button><button onClick={() => navigate("/support")}>Support</button><button onClick={() => navigate("/how-it-works")}>How it works</button></span></footer>; }
+function formatDate(value) { return value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value)) : "Date unavailable"; }
+const howItWorks = [{ title: "1. Upload", text: "Create a private project with a voiceover, raw clips, and output template. A TXT script can remain as a legacy fallback." }, { title: "2. Understand", text: "Gemini transcribes and normalizes the voiceover into story beats while sampled video frames receive factual scene descriptions." }, { title: "3. Match", text: "Gemini embeddings and ChromaDB retrieve scenes closest to each story beat." }, { title: "4. Render", text: "The existing FFmpeg renderer creates an MP4 using muted raw clips and the original uploaded voiceover." }];
+const aboutSections = [{ title: "Voiceover-led", text: "AI Video Editor treats the user’s voiceover as the primary story source rather than replacing it with generated speech." }, { title: "Semantic matching", text: "The application connects story beats with visual scenes using Gemini scene understanding and embeddings persisted in ChromaDB." }, { title: "Media rendering", text: "FFmpeg turns selected clip ranges into a downloadable rough cut while keeping original voiceover as output audio." }];

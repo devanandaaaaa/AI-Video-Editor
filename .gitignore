@@ -16,6 +16,7 @@ frontend/dist/
 backend/uploads/
 backend/outputs/
 backend/chroma_data/
+backend/app.db
 
 # Editor and operating-system files.
 .vscode/

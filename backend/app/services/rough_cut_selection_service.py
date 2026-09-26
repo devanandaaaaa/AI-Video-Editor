@@ -23,7 +23,7 @@ def find_source_video(project_directory: Path, clip_name: str) -> Path:
 def create_rough_cut_selection_plan(
     project_directory: Path, matches: list[dict[str, object]]
 ) -> list[dict[str, object]]:
-    """Map matched scenes to full-clip MVP segments without trimming any media."""
+    """Map matches to the real frame-sampling window that produced each scene."""
     if not matches:
         raise ValueError("Provide at least one semantic match to prepare a selection plan.")
 
@@ -36,7 +36,13 @@ def create_rough_cut_selection_plan(
 
         source_video = find_source_video(project_directory, clip_name)
         duration = get_video_duration_seconds(source_video)
-        matched_timestamp = (frame_number - 1) * FRAME_INTERVAL_SECONDS
+        matched_timestamp = min((frame_number - 1) * FRAME_INTERVAL_SECONDS, duration)
+        # Frames are sampled at this fixed interval. Using that measured sample window
+        # avoids inventing shot boundaries while selecting the matched visual moment.
+        segment_start = min(matched_timestamp, max(0.0, duration - FRAME_INTERVAL_SECONDS))
+        segment_end = min(segment_start + FRAME_INTERVAL_SECONDS, duration)
+        if segment_end <= segment_start:
+            segment_start, segment_end = 0.0, duration
 
         plan.append(
             {
@@ -49,8 +55,8 @@ def create_rough_cut_selection_plan(
                 ).replace("\\", "/"),
                 "matched_timestamp_seconds": float(matched_timestamp),
                 "source_clip_duration": round(duration, 3),
-                "segment_start_seconds": 0.0,
-                "segment_end_seconds": round(duration, 3),
+                "segment_start_seconds": round(segment_start, 3),
+                "segment_end_seconds": round(segment_end, 3),
             }
         )
 

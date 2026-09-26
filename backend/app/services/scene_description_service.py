@@ -6,7 +6,7 @@ from google import genai
 from google.genai import types
 
 
-DESCRIPTION_MODEL = "models/gemini-3.5-flash-lite"
+DESCRIPTION_MODEL = "models/gemini-3.8-flash"
 DESCRIPTION_PROMPT = """Describe this video frame for semantic video search.
 Write one concise factual sentence. Mention the main people, actions, objects,
 setting, and camera-relevant event if visible. Do not speculate about things
